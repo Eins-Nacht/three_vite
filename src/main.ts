@@ -74,17 +74,17 @@ const PAN_DEADZONE = 2;
 ===================================================== */
 let targetZoom = 1;
 
-let targetYaw = 0; // unbounded
-let currentYaw = 0;
+let targetYaw = 0;     // logical yaw
+let currentYaw = 0;    // raw yaw (unbounded)
 
 let targetPitch = 0;
 let targetHeight = HEIGHT_MIN;
 let targetFov = FOV_MIN;
 
-// gyro
-let lastGyroAlpha: number | null = null;
+// debug
+let debugGyroAlpha: number | null = null;
 
-// pc mouse pan
+// mouse pan
 let isMousePanning = false;
 let lastMouseX = 0;
 
@@ -155,25 +155,16 @@ new GLTFLoader().load("/models/city.glb", (gltf) => {
 });
 
 /* =====================================================
-   GYRO (DELTA + UNWRAP)
+   GYRO — WORLD ANCHORED
 ===================================================== */
 function onDeviceOrientation(e: DeviceOrientationEvent) {
   if (cameraMode !== "GYRO") return;
   if (e.alpha == null) return;
 
   const alpha = THREE.MathUtils.degToRad(e.alpha);
+  debugGyroAlpha = alpha;
 
-  if (lastGyroAlpha === null) {
-    lastGyroAlpha = alpha;
-    return;
-  }
-
-  let delta = alpha - lastGyroAlpha;
-  if (delta > Math.PI) delta -= Math.PI * 2;
-  if (delta < -Math.PI) delta += Math.PI * 2;
-
-  targetYaw += delta;
-  lastGyroAlpha = alpha;
+  targetYaw = alpha;
 }
 
 window.addEventListener(
@@ -219,8 +210,23 @@ window.addEventListener("touchstart", (e) => {
 window.addEventListener(
   "touchmove",
   (e) => {
-    if (cameraMode !== "GESTURE") return;
     e.preventDefault();
+
+    // 🔹 pinch zoom ทำงานทุก mode
+    if (e.touches.length === 2 && lastPinchDist !== null) {
+      const d = pinchDist(e.touches);
+      targetZoom += (d - lastPinchDist) * 0.002;
+      targetZoom = THREE.MathUtils.clamp(
+        targetZoom,
+        ZOOM_MIN,
+        ZOOM_MAX
+      );
+      lastPinchDist = d;
+      return;
+    }
+
+    // 🔹 pan หมุน → เฉพาะ GESTURE
+    if (cameraMode !== "GESTURE") return;
 
     if (e.touches.length === 1 && isTouchPanning) {
       const dx = e.touches[0].clientX - lastPanX;
@@ -229,13 +235,6 @@ window.addEventListener(
       if (Math.abs(dx) > PAN_DEADZONE) {
         targetYaw -= dx * PAN_SENS;
       }
-    }
-
-    if (e.touches.length === 2 && lastPinchDist !== null) {
-      const d = pinchDist(e.touches);
-      targetZoom += (d - lastPinchDist) * 0.002;
-      targetZoom = THREE.MathUtils.clamp(targetZoom, ZOOM_MIN, ZOOM_MAX);
-      lastPinchDist = d;
     }
   },
   { passive: false }
@@ -247,41 +246,18 @@ window.addEventListener("touchend", () => {
 });
 
 /* =====================================================
-   PC MOUSE PAN
-===================================================== */
-window.addEventListener("mousedown", (e) => {
-  if (cameraMode !== "GESTURE") return;
-  if (e.button !== 0) return; // left click
-
-  isMousePanning = true;
-  lastMouseX = e.clientX;
-});
-
-window.addEventListener("mousemove", (e) => {
-  if (!isMousePanning) return;
-  if (cameraMode !== "GESTURE") return;
-
-  const dx = e.clientX - lastMouseX;
-  lastMouseX = e.clientX;
-
-  if (Math.abs(dx) > PAN_DEADZONE) {
-    targetYaw -= dx * PAN_SENS;
-  }
-});
-
-window.addEventListener("mouseup", () => {
-  isMousePanning = false;
-});
-
-/* =====================================================
-   DESKTOP ZOOM
+   DESKTOP ZOOM (GESTURE ONLY)
 ===================================================== */
 window.addEventListener(
   "wheel",
   (e) => {
     e.preventDefault();
     targetZoom += e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
-    targetZoom = THREE.MathUtils.clamp(targetZoom, ZOOM_MIN, ZOOM_MAX);
+    targetZoom = THREE.MathUtils.clamp(
+      targetZoom,
+      ZOOM_MIN,
+      ZOOM_MAX
+    );
   },
   { passive: false }
 );
@@ -301,22 +277,47 @@ window.addEventListener("resize", () => {
 function normalizeAngle(rad: number) {
   return ((rad + Math.PI) % (Math.PI * 2)) - Math.PI;
 }
+function wrapDeg360(deg: number) {
+  return ((deg % 360) + 360) % 360;
+}
 
 /* =====================================================
    LOOP
 ===================================================== */
 const clock = new THREE.Clock();
+const TWO_PI = Math.PI * 2;
+const SNAP_RAD = THREE.MathUtils.degToRad(15);
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
 
-  currentYaw = THREE.MathUtils.damp(currentYaw, targetYaw, YAW_DAMP, dt);
+  // --- YAW UPDATE (robust snap near 0 / 360)
+  const yawWrapped =
+    ((currentYaw % TWO_PI) + TWO_PI) % TWO_PI;
 
-  camera.zoom = THREE.MathUtils.damp(camera.zoom, targetZoom, ZOOM_DAMP, dt);
+  if (
+    yawWrapped < SNAP_RAD ||
+    yawWrapped > TWO_PI - SNAP_RAD
+  ) {
+    currentYaw = targetYaw;
+  } else {
+    currentYaw = THREE.MathUtils.damp(
+      currentYaw,
+      targetYaw,
+      YAW_DAMP,
+      dt
+    );
+  }
+
+  camera.zoom = THREE.MathUtils.damp(
+    camera.zoom,
+    targetZoom,
+    ZOOM_DAMP,
+    dt
+  );
 
   const t = (camera.zoom - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN);
-
   targetHeight = THREE.MathUtils.lerp(HEIGHT_MIN, HEIGHT_MAX, t);
   targetPitch = THREE.MathUtils.lerp(PITCH_MIN, PITCH_MAX, t);
   targetFov = THREE.MathUtils.lerp(FOV_MIN, FOV_MAX, t);
@@ -335,7 +336,12 @@ function animate() {
     dt
   );
 
-  camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, FOV_DAMP, dt);
+  camera.fov = THREE.MathUtils.damp(
+    camera.fov,
+    targetFov,
+    FOV_DAMP,
+    dt
+  );
 
   camera.rotation.set(
     BASE_ROTATION.x,
@@ -346,12 +352,24 @@ function animate() {
 
   camera.updateProjectionMatrix();
 
+  const yawDegRaw = THREE.MathUtils.radToDeg(currentYaw);
+  const yawDegDisplay = wrapDeg360(yawDegRaw);
+
   overlay.innerText =
     `MODE: ${cameraMode}\n` +
     `ZOOM: ${camera.zoom.toFixed(2)}\n` +
     `FOV: ${camera.fov.toFixed(1)}°\n` +
     `HEIGHT: ${camera.position.y.toFixed(1)}\n` +
-    `YAW: ${THREE.MathUtils.radToDeg(currentYaw).toFixed(1)}°`;
+    `YAW (RAW): ${yawDegRaw.toFixed(1)}°\n` +
+    `YAW (0–360): ${yawDegDisplay.toFixed(1)}°\n` +
+    `\n--- WORLD GYRO ---\n` +
+    `GYRO α: ${
+      debugGyroAlpha === null
+        ? "N/A"
+        : wrapDeg360(
+            THREE.MathUtils.radToDeg(debugGyroAlpha)
+          ).toFixed(1) + "°"
+    }`;
 
   renderer.render(scene, camera);
 }

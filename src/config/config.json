@@ -1,13 +1,13 @@
 {
   "ZOOM": {
     "MIN": 0.5,
-    "MAX": 3.0,
-    "STEP": 0.12,
+    "MAX": 2.5,
+    "STEP": 0.05,
     "DAMP": 10
   },
   "HEIGHT": {
     "MIN": 2,
-    "MAX": 10,
+    "MAX": 25,
     "DAMP": 8
   },
   "PITCH": {
@@ -17,7 +17,7 @@
   },
   "FOV": {
     "MIN": 60,
-    "MAX": 150,
+    "MAX": 100,
     "DAMP": 10
   },
   "YAW": {

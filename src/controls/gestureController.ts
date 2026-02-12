@@ -23,7 +23,7 @@ export function bindGesture(options: GestureOptions) {
   }
 
   window.addEventListener("touchstart", (e) => {
-    if (!options.isActive()) return;
+    //if (!options.isActive()) return;
 
     if (e.touches.length === 1) {
       isTouchPanning = true;
@@ -39,7 +39,7 @@ export function bindGesture(options: GestureOptions) {
   window.addEventListener(
     "touchmove",
     (e) => {
-      if (!options.isActive()) return;
+      //if (!options.isActive()) return;
 
       e.preventDefault();
 

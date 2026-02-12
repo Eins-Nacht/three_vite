@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import CONFIG_JSON from "./config/config.json";
+import LOCATION from "./config/location.json";
 
 import { initUI, type CameraMode } from "./ui/ui";
 import { bindGyro } from "./controls/gyroController";
@@ -23,6 +24,18 @@ const CONFIG = {
 ===================================================== */
 
 document.body.style.touchAction = "none";
+
+/* =====================================================
+   WORLD CONSTANTS (Frontend Owned)
+===================================================== */
+
+const MAP_WIDTH = 50;
+const MAP_HEIGHT = 50;
+
+const WORLD_WIDTH = 20;
+const WORLD_DEPTH = 20;
+
+const FLOOR_HEIGHT = 0;
 
 /* =====================================================
    CORE 3D SETUP
@@ -67,7 +80,6 @@ let targetHeight = CONFIG.HEIGHT.MIN;
 let targetFov = CONFIG.FOV.MIN;
 
 let debugGyroAlpha: number | null = null;
-
 let cameraMode: CameraMode = "GYRO";
 
 /* =====================================================
@@ -98,28 +110,61 @@ function dampAngle(current: number, target: number, lambda: number, dt: number) 
 }
 
 /* =====================================================
+   MAPPING
+===================================================== */
+
+function mapToWorld(dbX: number, dbY: number, floor: number) {
+  const worldX = (dbX / MAP_WIDTH) * WORLD_WIDTH - WORLD_WIDTH / 2;
+  const worldZ = (dbY / MAP_HEIGHT) * WORLD_DEPTH - WORLD_DEPTH / 2;
+  const worldY = floor * FLOOR_HEIGHT;
+
+  return new THREE.Vector3(worldX, worldY, worldZ);
+}
+
+function loadFloorModel(floor: number) {
+  const path = `/models/f${floor}.glb`;
+
+  new GLTFLoader().load(path, (gltf) => {
+    gltf.scene.position.y = floor * FLOOR_HEIGHT;
+    scene.add(gltf.scene);
+  });
+}
+
+function placeLocationFromBackend() {
+  const { x, y, floor } = LOCATION;
+
+  loadFloorModel(floor);
+
+  const pos = mapToWorld(x, y, floor);
+
+  // ใช้ตำแหน่งจาก DB เป็นตำแหน่งกล้อง
+  camera.position.set(
+    pos.x,
+    CONFIG.HEIGHT.MIN,
+    pos.z
+  );
+
+  // ถ้าต้องการให้กล้องมองลงพื้นเสมอ
+  // camera.lookAt(pos.x, 0, pos.z);
+}
+
+
+
+/* =====================================================
    CONTROLLERS
 ===================================================== */
 
 bindGyro({
   isActive: () => cameraMode === "GYRO",
-  setTargetYaw: (yaw) => {
-    targetYaw = yaw;
-  },
-  setDebugAlpha: (alpha) => {
-    debugGyroAlpha = alpha;
-  },
+  setTargetYaw: (yaw) => (targetYaw = yaw),
+  setDebugAlpha: (alpha) => (debugGyroAlpha = alpha),
 });
 
 bindGesture({
   isActive: () => cameraMode === "GESTURE",
   getZoom: () => targetZoom,
-  setZoom: (z) => {
-    targetZoom = z;
-  },
-  addYaw: (delta) => {
-    targetYaw += delta;
-  },
+  setZoom: (z) => (targetZoom = z),
+  addYaw: (delta) => (targetYaw += delta),
   zoomConfig: {
     MIN: CONFIG.ZOOM.MIN,
     MAX: CONFIG.ZOOM.MAX,
@@ -134,16 +179,16 @@ bindGesture({
 
 const ui = initUI({
   getMode: () => cameraMode,
-  toggleMode: () => {
-    cameraMode = cameraMode === "GYRO" ? "GESTURE" : "GYRO";
-  },
+
+  toggleMode: () =>
+    (cameraMode = cameraMode === "GYRO" ? "GESTURE" : "GYRO"),
+
   getDebugInfo: () => {
     const yawDeg = wrapDeg360(
       THREE.MathUtils.radToDeg(currentYaw)
     );
 
     return (
-      `MODE: ${cameraMode}\n` +
       `ZOOM: ${camera.zoom.toFixed(2)}\n` +
       `HEIGHT: ${camera.position.y.toFixed(1)}\n` +
       `YAW: ${yawDeg.toFixed(1)}°\n` +
@@ -156,37 +201,15 @@ const ui = initUI({
       }`
     );
   },
+
+  // 👇 เพิ่มอันนี้ให้ UI
+  getPosition: () => ({
+    x: camera.position.x,
+    y: camera.position.y,
+    z: camera.position.z,
+  }),
 });
 
-function loadCityWithFallback(index = 0) {
-  const cityNames = [
-    "city.glb",
-    "no_roof.glb",
-    "among_us.glb",
-    "old_city.glb",
-    "city4.glb",
-  ];
-
-  if (index >= cityNames.length) {
-    console.error("❌ All city models failed to load.");
-    return;
-  }
-
-  const path = `/models/${cityNames[index]}`;
-
-  new GLTFLoader().load(
-    path,
-    (gltf) => {
-      console.log(`✅ Loaded: ${path}`);
-      scene.add(gltf.scene);
-    },
-    undefined,
-    () => {
-      console.warn(`⚠️ Failed: ${path}`);
-      loadCityWithFallback(index + 1);
-    }
-  );
-}
 
 /* =====================================================
    LOOP
@@ -250,12 +273,12 @@ function animate() {
 
   ui.update();
   renderer.render(scene, camera);
-  loadCityWithFallback();
+  
 }
 
-
 /* =====================================================
-   MODEL LOADER WITH FALLBACK
+   INIT
 ===================================================== */
 
+placeLocationFromBackend();
 animate();

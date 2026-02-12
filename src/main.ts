@@ -1,44 +1,34 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import CONFIG_JSON from "./config/config.json";
 
 /* =====================================================
-   1. CONFIG / CONSTANTS
+   CONFIG PARSE
 ===================================================== */
+
 const CONFIG = {
-  ZOOM: {
-    MIN: 0.5,
-    MAX: 3.0,
-    STEP: 0.12,
-    DAMP: 10,
-  },
-  HEIGHT: {
-    MIN: 2,
-    MAX: 10,
-    DAMP: 8,
-  },
+  ...CONFIG_JSON,
   PITCH: {
-    MIN: 0,
-    MAX: -Math.PI / 2,
-    DAMP: 10,
-  },
-  FOV: {
-    MIN: 60,
-    MAX: 150,
-    DAMP: 10,
-  },
-  YAW: {
-    DAMP: 8,
-  },
-  PAN: {
-    SENS: 0.005,
-    DEADZONE: 2,
+    ...CONFIG_JSON.PITCH,
+    MAX: THREE.MathUtils.degToRad(CONFIG_JSON.PITCH.MAX_DEG),
   },
 };
 
 /* =====================================================
-   2. CORE 3D SETUP
+   PREVENT DEFAULT BROWSER BEHAVIOR
 ===================================================== */
+
+function preventBrowserGesture() {
+  document.body.style.touchAction = "none";
+  document.documentElement.style.overflow = "hidden";
+  document.body.style.overflow = "hidden";
+  document.body.style.height = "100vh";
+}
 preventBrowserGesture();
+
+/* =====================================================
+   CORE 3D SETUP
+===================================================== */
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xaec6cf);
@@ -51,6 +41,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   5000
 );
+
 camera.position.set(0, CONFIG.HEIGHT.MIN, 0);
 
 const BASE_ROTATION = new THREE.Euler(0, 0, 0, "YXZ");
@@ -63,12 +54,12 @@ document.body.appendChild(renderer.domElement);
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
 dirLight.position.set(50, 100, 50);
 scene.add(dirLight);
-
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.6));
 
 /* =====================================================
-   3. STATE
+   STATE
 ===================================================== */
+
 let targetZoom = 1;
 let targetYaw = 0;
 let currentYaw = 0;
@@ -80,8 +71,9 @@ let targetFov = CONFIG.FOV.MIN;
 let debugGyroAlpha: number | null = null;
 
 /* =====================================================
-   4. MATH / UTILS
+   UTILS
 ===================================================== */
+
 const TWO_PI = Math.PI * 2;
 
 function normalizeAngle(rad: number) {
@@ -96,31 +88,24 @@ function damp(current: number, target: number, lambda: number, dt: number) {
   return THREE.MathUtils.damp(current, target, lambda, dt);
 }
 
-/* ---------- ANGLE DAMPING (KEY FIX) ---------- */
 function shortestAngleDelta(from: number, to: number) {
-  return Math.atan2(
-    Math.sin(to - from),
-    Math.cos(to - from)
-  );
+  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
 
-function dampAngle(
-  current: number,
-  target: number,
-  lambda: number,
-  dt: number
-) {
+function dampAngle(current: number, target: number, lambda: number, dt: number) {
   const delta = shortestAngleDelta(current, target);
   return current + delta * (1 - Math.exp(-lambda * dt));
 }
 
 /* =====================================================
-   5. CAMERA MODES
+   CAMERA MODE
 ===================================================== */
+
 type CameraMode = "GYRO" | "GESTURE";
 let cameraMode: CameraMode = "GYRO";
 
-/* ---------- GYRO MODE ---------- */
+/* ---------------- GYRO ---------------- */
+
 function updateGyroYaw(alphaDeg: number) {
   const alpha = THREE.MathUtils.degToRad(alphaDeg);
   debugGyroAlpha = alpha;
@@ -134,21 +119,11 @@ function bindGyro() {
     updateGyroYaw(e.alpha);
   }
 
-  window.addEventListener(
-    "click",
-    () => {
-      // @ts-ignore
-      DeviceOrientationEvent?.requestPermission?.().then((res: string) => {
-        if (res === "granted") {
-          window.addEventListener("deviceorientation", onDeviceOrientation);
-        }
-      }) ?? window.addEventListener("deviceorientation", onDeviceOrientation);
-    },
-    { once: true }
-  );
+  window.addEventListener("deviceorientation", onDeviceOrientation);
 }
 
-/* ---------- GESTURE MODE ---------- */
+/* ---------------- GESTURE ---------------- */
+
 let isTouchPanning = false;
 let lastPanX = 0;
 let lastPinchDist: number | null = null;
@@ -224,9 +199,11 @@ function bindGesture() {
 }
 
 /* =====================================================
-   6. DEBUG UI
+   DEBUG UI
 ===================================================== */
+
 const overlay = document.createElement("div");
+
 Object.assign(overlay.style, {
   position: "fixed",
   top: "12px",
@@ -240,18 +217,47 @@ Object.assign(overlay.style, {
   pointerEvents: "none",
   zIndex: "9999",
 });
+
 document.body.appendChild(overlay);
 
 /* =====================================================
-   7. MAIN LOOP
+   MODE BUTTON
 ===================================================== */
+
+const modeBtn = document.createElement("button");
+modeBtn.innerText = "MODE: GYRO";
+
+Object.assign(modeBtn.style, {
+  position: "fixed",
+  bottom: "16px",
+  left: "50%",
+  transform: "translateX(-50%)",
+  padding: "10px 16px",
+  borderRadius: "8px",
+  border: "none",
+  background: "#222",
+  color: "#fff",
+  fontSize: "14px",
+  zIndex: "9999",
+});
+
+document.body.appendChild(modeBtn);
+
+modeBtn.onclick = () => {
+  cameraMode = cameraMode === "GYRO" ? "GESTURE" : "GYRO";
+  modeBtn.innerText = `MODE: ${cameraMode}`;
+};
+
+/* =====================================================
+   MAIN LOOP
+===================================================== */
+
 const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
 
-  // 🔥 FIXED YAW UPDATE
   currentYaw = dampAngle(
     currentYaw,
     targetYaw,
@@ -270,11 +276,13 @@ function animate() {
     CONFIG.HEIGHT.MAX,
     t
   );
+
   targetPitch = THREE.MathUtils.lerp(
     CONFIG.PITCH.MIN,
     CONFIG.PITCH.MAX,
     t
   );
+
   targetFov = THREE.MathUtils.lerp(
     CONFIG.FOV.MIN,
     CONFIG.FOV.MAX,
@@ -327,50 +335,13 @@ function animate() {
 }
 
 /* =====================================================
-   MODE TOGGLE BUTTON
-===================================================== */
-const modeBtn = document.createElement("button");
-modeBtn.innerText = "MODE: GYRO";
-
-Object.assign(modeBtn.style, {
-  position: "fixed",
-  bottom: "16px",
-  left: "50%",
-  transform: "translateX(-50%)",
-  padding: "10px 16px",
-  borderRadius: "8px",
-  border: "none",
-  background: "#222",
-  color: "#fff",
-  fontSize: "14px",
-  zIndex: "9999",
-});
-
-document.body.appendChild(modeBtn);
-
-modeBtn.onclick = () => {
-  cameraMode = cameraMode === "GYRO" ? "GESTURE" : "GYRO";
-  modeBtn.innerText = `MODE: ${cameraMode}`;
-};
-
-animate();
-
-/* =====================================================
    INIT
 ===================================================== */
+
 bindGyro();
 bindGesture();
+animate();
 
 new GLTFLoader().load("/models/city.glb", (gltf) => {
   scene.add(gltf.scene);
 });
-
-/* =====================================================
-   PREVENT DEFAULT
-===================================================== */
-function preventBrowserGesture() {
-  document.body.style.touchAction = "none";
-  document.documentElement.style.overflow = "hidden";
-  document.body.style.overflow = "hidden";
-  document.body.style.height = "100vh";
-}

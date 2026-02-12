@@ -1,0 +1,30 @@
+{
+  "ZOOM": {
+    "MIN": 0.5,
+    "MAX": 3.0,
+    "STEP": 0.12,
+    "DAMP": 10
+  },
+  "HEIGHT": {
+    "MIN": 2,
+    "MAX": 10,
+    "DAMP": 8
+  },
+  "PITCH": {
+    "MIN": 0,
+    "MAX_DEG": -90,
+    "DAMP": 10
+  },
+  "FOV": {
+    "MIN": 60,
+    "MAX": 150,
+    "DAMP": 10
+  },
+  "YAW": {
+    "DAMP": 8
+  },
+  "PAN": {
+    "SENS": 0.005,
+    "DEADZONE": 2
+  }
+}

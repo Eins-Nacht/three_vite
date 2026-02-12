@@ -3,7 +3,7 @@ from tkinter import messagebox
 import json
 import os
 
-FILE_PATH = "./config/location.json"
+FILE_PATH = "./public/config/location.json"
 
 
 def load_json():

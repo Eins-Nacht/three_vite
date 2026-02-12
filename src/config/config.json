@@ -26,5 +26,8 @@
   "PAN": {
     "SENS": 0.005,
     "DEADZONE": 2
+  },
+  "CAMERA": {
+    "DAMP": 5
   }
 }

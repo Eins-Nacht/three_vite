@@ -1,11 +1,19 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import CONFIG_JSON from "./config/config.json";
-import LOCATION from "./config/location.json";
 
 import { initUI, type CameraMode } from "./ui/ui";
 import { bindGyro } from "./controls/gyroController";
 import { bindGesture } from "./controls/gestureController";
+
+/* =====================================================
+   LOAD LOCATION (runtime)
+===================================================== */
+
+async function loadLocation() {
+  const res = await fetch("/config/location.json");
+  return await res.json();
+}
 
 /* =====================================================
    CONFIG PARSE
@@ -20,13 +28,7 @@ const CONFIG = {
 };
 
 /* =====================================================
-   PREVENT DEFAULT
-===================================================== */
-
-document.body.style.touchAction = "none";
-
-/* =====================================================
-   WORLD CONSTANTS (Frontend Owned)
+   WORLD CONSTANTS
 ===================================================== */
 
 const MAP_WIDTH = 50;
@@ -55,16 +57,12 @@ const camera = new THREE.PerspectiveCamera(
 
 camera.position.set(0, CONFIG.HEIGHT.MIN, 0);
 
-const BASE_ROTATION = new THREE.Euler(0, 0, 0, "YXZ");
-
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-dirLight.position.set(50, 100, 50);
-scene.add(dirLight);
+scene.add(new THREE.DirectionalLight(0xffffff, 1.5));
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.6));
 
 /* =====================================================
@@ -79,25 +77,28 @@ let targetPitch = 0;
 let targetHeight = CONFIG.HEIGHT.MIN;
 let targetFov = CONFIG.FOV.MIN;
 
+let targetCamX = 0;
+let targetCamZ = 0;
+
+let currentFloor: number | null = null;
+
 let debugGyroAlpha: number | null = null;
 let cameraMode: CameraMode = "GYRO";
+
+let currentFloorObject: THREE.Object3D | null = null; //for reset floor if the new floor is different
 
 /* =====================================================
    UTILS
 ===================================================== */
 
-const TWO_PI = Math.PI * 2;
-
-function normalizeAngle(rad: number) {
-  return ((rad + Math.PI) % TWO_PI) - Math.PI;
-}
-
-function wrapDeg360(deg: number) {
-  return ((deg % 360) + 360) % 360;
-}
+const clock = new THREE.Clock();
 
 function damp(current: number, target: number, lambda: number, dt: number) {
   return THREE.MathUtils.damp(current, target, lambda, dt);
+}
+
+function normalizeAngle(rad: number) {
+  return ((rad + Math.PI) % (Math.PI * 2)) - Math.PI;
 }
 
 function shortestAngleDelta(from: number, to: number) {
@@ -124,31 +125,47 @@ function mapToWorld(dbX: number, dbY: number, floor: number) {
 function loadFloorModel(floor: number) {
   const path = `/models/f${floor}.glb`;
 
-  new GLTFLoader().load(path, (gltf) => {
-    gltf.scene.position.y = floor * FLOOR_HEIGHT;
-    scene.add(gltf.scene);
+  const loader = new GLTFLoader();
+
+  loader.load(path, (gltf) => {
+    // ลบ floor เก่าก่อน
+    if (currentFloorObject) {
+      scene.remove(currentFloorObject);
+
+      // cleanup memory
+      currentFloorObject.traverse((obj: any) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((m) => m.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+
+    currentFloorObject = gltf.scene;
+    currentFloorObject.position.y = floor * FLOOR_HEIGHT;
+
+    scene.add(currentFloorObject);
   });
 }
 
-function placeLocationFromBackend() {
-  const { x, y, floor } = LOCATION;
 
-  loadFloorModel(floor);
+function placeLocationFromBackend(location: any) {
+  const { x, y, floor } = location;
+
+  if (floor !== currentFloor) {
+    loadFloorModel(floor);
+    currentFloor = floor;
+  }
 
   const pos = mapToWorld(x, y, floor);
 
-  // ใช้ตำแหน่งจาก DB เป็นตำแหน่งกล้อง
-  camera.position.set(
-    pos.x,
-    CONFIG.HEIGHT.MIN,
-    pos.z
-  );
-
-  // ถ้าต้องการให้กล้องมองลงพื้นเสมอ
-  // camera.lookAt(pos.x, 0, pos.z);
+  targetCamX = pos.x;
+  targetCamZ = pos.z;
 }
-
-
 
 /* =====================================================
    CONTROLLERS
@@ -165,10 +182,7 @@ bindGesture({
   getZoom: () => targetZoom,
   setZoom: (z) => (targetZoom = z),
   addYaw: (delta) => (targetYaw += delta),
-  zoomConfig: {
-    MIN: CONFIG.ZOOM.MIN,
-    MAX: CONFIG.ZOOM.MAX,
-  },
+  zoomConfig: CONFIG.ZOOM,
   panSens: CONFIG.PAN.SENS,
   deadzone: CONFIG.PAN.DEADZONE,
 });
@@ -179,30 +193,17 @@ bindGesture({
 
 const ui = initUI({
   getMode: () => cameraMode,
-
   toggleMode: () =>
     (cameraMode = cameraMode === "GYRO" ? "GESTURE" : "GYRO"),
-
-  getDebugInfo: () => {
-    const yawDeg = wrapDeg360(
-      THREE.MathUtils.radToDeg(currentYaw)
-    );
-
-    return (
-      `ZOOM: ${camera.zoom.toFixed(2)}\n` +
-      `HEIGHT: ${camera.position.y.toFixed(1)}\n` +
-      `YAW: ${yawDeg.toFixed(1)}°\n` +
-      `GYRO α: ${
-        debugGyroAlpha == null
-          ? "N/A"
-          : wrapDeg360(
-              THREE.MathUtils.radToDeg(debugGyroAlpha)
-            ).toFixed(1) + "°"
-      }`
-    );
-  },
-
-  // 👇 เพิ่มอันนี้ให้ UI
+  getDebugInfo: () =>
+    `ZOOM: ${camera.zoom.toFixed(2)}
+HEIGHT: ${camera.position.y.toFixed(1)}
+YAW: ${THREE.MathUtils.radToDeg(currentYaw).toFixed(1)}°
+GYRO α: ${
+      debugGyroAlpha == null
+        ? "N/A"
+        : THREE.MathUtils.radToDeg(debugGyroAlpha).toFixed(1) + "°"
+    }`,
   getPosition: () => ({
     x: camera.position.x,
     y: camera.position.y,
@@ -210,12 +211,9 @@ const ui = initUI({
   }),
 });
 
-
 /* =====================================================
    LOOP
 ===================================================== */
-
-const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -253,17 +251,24 @@ function animate() {
     dt
   );
 
-  BASE_ROTATION.x = damp(
-    BASE_ROTATION.x,
-    targetPitch,
-    CONFIG.PITCH.DAMP,
+  camera.position.x = damp(
+    camera.position.x,
+    targetCamX,
+    CONFIG.CAMERA.DAMP,
+    dt
+  );
+
+  camera.position.z = damp(
+    camera.position.z,
+    targetCamZ,
+    CONFIG.CAMERA.DAMP,
     dt
   );
 
   camera.fov = damp(camera.fov, targetFov, CONFIG.FOV.DAMP, dt);
 
   camera.rotation.set(
-    BASE_ROTATION.x,
+    targetPitch,
     normalizeAngle(currentYaw),
     0,
     "YXZ"
@@ -273,12 +278,22 @@ function animate() {
 
   ui.update();
   renderer.render(scene, camera);
-  
 }
 
 /* =====================================================
    INIT
 ===================================================== */
 
-placeLocationFromBackend();
-animate();
+async function init() {
+  const location = await loadLocation();
+  placeLocationFromBackend(location);
+
+  animate();
+
+  setInterval(async () => {
+    const newLocation = await loadLocation();
+    placeLocationFromBackend(newLocation);
+  }, 3000);
+}
+
+init();
